@@ -5,8 +5,6 @@ services:
       args:
         HOST_UID: ${HOST_UID:-501}
         HOST_GID: ${HOST_GID:-20}
-    volumes:
-      - ./bridge-container.js:/home/claude/bridge-container.js:ro
     env_file:
       - .env
       - .env.local

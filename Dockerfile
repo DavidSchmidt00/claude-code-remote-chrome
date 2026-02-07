@@ -5,13 +5,12 @@ ARG HOST_GID=20
 ENV USER=claude
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl nano mc ca-certificates sudo \
+    && apt-get install -y --no-install-recommends git curl nano mc ca-certificates socat \
     && rm -rf /var/lib/apt/lists/*
 
-# Create user matching host UID/GID, with sudo
+# Create user matching host UID/GID
 RUN groupadd -o -g ${HOST_GID} $USER 2>/dev/null || true \
-    && useradd -o -u ${HOST_UID} -g ${HOST_GID} -m -s /bin/bash $USER \
-    && echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USER
+    && useradd -o -u ${HOST_UID} -g ${HOST_GID} -m -s /bin/bash $USER
 
 USER $USER
 WORKDIR /home/$USER

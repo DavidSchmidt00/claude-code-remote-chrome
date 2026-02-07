@@ -10,7 +10,7 @@ Chrome Bridge is a transparent TCP proxy for Chrome Native Messaging Host (NMH) 
 Claude Code (container)
   → claude --claude-in-chrome-mcp (MCP server, spawned by Claude)
     → connects to Unix socket: /tmp/claude-mcp-browser-bridge-{USER}/{PID}.sock
-      → bridge-container.js (forwards to TCP)
+      → socat (entrypoint.sh, forwards to TCP)
         → bridge-host.js (TCP :9229, forwards to real NMH socket)
           → /tmp/claude-mcp-browser-bridge-{host-user}/{NMH-PID}.sock
             → Chrome NMH → Chrome Extension → chrome.debugger API
@@ -41,15 +41,22 @@ Socket files appear in `ls` but `connect()` returns `ECONNREFUSED`. This is why 
 
 The file `~/.claude/chrome/chrome-native-host` is created by Claude Code for Chrome's `connectNative()` API. The MCP server does NOT spawn it — it directly watches the socket directory. The entrypoint still creates this file because Claude Code expects it to exist.
 
+### Key discovery: socket permissions must be strict
+
+The MCP server requires the socket directory to be `0700` and the socket file to be `0600`. Without this, the MCP server refuses to connect. socat supports `mode=0600` option for the socket; the directory is set via `mkdir -m 700`.
+
+### Key discovery: socat needs setsid in Docker
+
+When socat runs as a background process in `entrypoint.sh`, Ctrl+C in the container terminal sends SIGINT to the entire process group, killing socat. Using `setsid` moves socat to its own session, protecting it from terminal signals.
+
 ## File overview
 
 | File | Location | Purpose |
 |------|----------|---------|
 | `bridge-host.js` | Host | TCP server, connects to real NMH socket |
-| `bridge-container.js` | Container | Creates fake NMH socket, forwards to TCP |
-| `entrypoint.sh` | Container | Injects credentials, sets up chrome-native-host |
-| `Dockerfile` | Build | node:20-slim, Claude CLI, user matching host UID |
-| `docker-compose.yml` | Build | Mounts bridge, sets env vars |
+| `entrypoint.sh` | Container | Credentials, chrome-native-host, socat bridge |
+| `Dockerfile` | Build | node:20-slim + socat, Claude CLI, user matching host UID |
+| `docker-compose.yml` | Build | Sets env vars |
 | `Makefile` | Host | `up`, `shell` commands |
 
 ## Environment variables
@@ -58,37 +65,59 @@ The file `~/.claude/chrome/chrome-native-host` is created by Claude Code for Chr
 |----------|-------|---------|---------|
 | `USER` | Dockerfile ENV | `claude` | Socket directory name |
 | `BRIDGE_PORT` | docker-compose | `9229` | TCP port between bridges |
-| `BRIDGE_TCP_HOST` | bridge-container.js | `host.docker.internal` | Host address from container |
+| `BRIDGE_TCP_HOST` | entrypoint.sh socat | `host.docker.internal` | Host address from container |
 | `BRIDGE_USER` | bridge-host.js | `os.userInfo().username` | Host socket directory name |
 | `BRIDGE_HOST` | bridge-host.js | `0.0.0.0` | TCP bind address |
 | `CLAUDE_CREDENTIALS` | .env.local | — | OAuth JSON for ~/.claude/.credentials.json |
 
 ## Testing
 
-Use pytest for tests (reminder for project convention).
-
-The original `test-socket.py` (now removed) was used to verify socket connectivity. To manually test the bridge:
+To manually test the bridge from inside the container:
 
 ```bash
-# Container: send a test message through the bridge
-python3 -c "
-import socket, struct, json
-s = socket.socket(socket.AF_UNIX)
-s.settimeout(5)
-s.connect('/tmp/claude-mcp-browser-bridge-claude/<PID>.sock')
-msg = json.dumps({'method':'execute_tool','params':{'client_id':'test','tool':'tabs_context_mcp','args':{'createIfEmpty':True}}}).encode()
-s.sendall(struct.pack('<I', len(msg)) + msg)
-hdr = s.recv(4)
-length = struct.unpack('<I', hdr)[0]
-data = b''
-while len(data) < length: data += s.recv(length - len(data))
-print(json.dumps(json.loads(data), indent=2))
+# 1. Verify socat is running and socket exists
+ls /tmp/claude-mcp-browser-bridge-claude/
+
+# 2. Test connectivity (requires bridge-host.js running on host)
+node -e "
+const net = require('net');
+const fs = require('fs');
+const dir = '/tmp/claude-mcp-browser-bridge-claude';
+const sock = fs.readdirSync(dir)[0];
+const s = net.createConnection(dir + '/' + sock, () => console.log('connected'));
+s.on('error', e => console.log('error:', e.message));
+s.on('close', () => console.log('closed'));
+"
+
+# 3. End-to-end test with NMH message (requires Chrome with extension)
+node -e "
+const net = require('net');
+const fs = require('fs');
+const dir = '/tmp/claude-mcp-browser-bridge-claude';
+const sock = fs.readdirSync(dir)[0];
+const s = net.createConnection(dir + '/' + sock, () => {
+  const msg = Buffer.from(JSON.stringify({method:'execute_tool',params:{client_id:'test',tool:'tabs_context_mcp',args:{createIfEmpty:true}}}));
+  const hdr = Buffer.alloc(4);
+  hdr.writeUInt32LE(msg.length);
+  s.write(Buffer.concat([hdr, msg]));
+});
+let buf = Buffer.alloc(0);
+s.on('data', d => {
+  buf = Buffer.concat([buf, d]);
+  if (buf.length >= 4) {
+    const len = buf.readUInt32LE(0);
+    if (buf.length >= 4 + len) {
+      console.log(JSON.parse(buf.slice(4, 4 + len).toString()));
+      s.destroy();
+    }
+  }
+});
+s.on('error', e => console.log('error:', e.message));
 "
 ```
 
 ## Debugging
 
 - MCP logs: `~/.cache/claude-cli-nodejs/-home-claude/mcp-logs-claude-in-chrome/*.jsonl`
-- bridge-container.js logs to stderr (visible in terminal)
 - bridge-host.js logs to stderr
 - Use `strace -f -e trace=connect,openat -p <MCP_PID>` to trace MCP server (requires `SYS_PTRACE` capability in compose)

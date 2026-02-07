@@ -8,14 +8,14 @@ Claude Code has a "Claude in Chrome" feature that lets it control your browser â
 
 ## How it works
 
-Two small Node.js scripts forward messages between the container and your host:
+A socat bridge in the container and a Node.js script on the host forward messages between them:
 
 ```
 Container                          Host
 Claude Code                        Chrome
     |                                |
     v                                ^
-bridge-container.js  --TCP:9229-->  bridge-host.js
+socat (entrypoint)   --TCP:9229-->  bridge-host.js
 (Unix socket)                      (Unix socket)
 ```
 
@@ -48,10 +48,9 @@ bridge-container.js  --TCP:9229-->  bridge-host.js
    node bridge-host.js
    ```
 
-4. **Inside the container**, start the container bridge and Claude:
+4. **Inside the container**, start Claude (the bridge starts automatically via entrypoint):
 
    ```bash
-   node ~/bridge-container.js &
    claude --chrome
    ```
 
