@@ -1,0 +1,16 @@
+services:
+  claude:
+    build:
+      context: .
+      args:
+        HOST_UID: ${HOST_UID:-501}
+        HOST_GID: ${HOST_GID:-20}
+    volumes:
+      - ./bridge-container.js:/home/claude/bridge-container.js:ro
+    env_file:
+      - .env
+      - .env.local
+    environment:
+      - BRIDGE_PORT=9229
+    stdin_open: true
+    tty: true
