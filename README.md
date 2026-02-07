@@ -64,6 +64,10 @@ bridge-container.js  --TCP:9229-->  bridge-host.js
 | `make up`   | Build image and start interactive shell  |
 | `make shell`| Open additional terminal in the container |
 
+## Related
+
+This project is a proof-of-concept solution for [anthropics/claude-code#15450](https://github.com/anthropics/claude-code/issues/15450) — a feature request for remote development support for the Chrome extension. The same approach can be adapted for Eclipse Che, GitHub Codespaces, Gitpod, or any environment that supports `host.docker.internal` or TCP port forwarding.
+
 ## Troubleshooting
 
 - **"Extension not detected"** — Make sure `bridge-host.js` is running on the host and Chrome has the Claude extension active.
