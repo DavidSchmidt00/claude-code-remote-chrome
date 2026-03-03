@@ -8,25 +8,26 @@ Claude Code has a "Claude in Chrome" feature that lets it control your browser �
 
 ## How it works
 
-A socat bridge in the container and a Node.js script on the host forward messages between them:
+A socat bridge in the container and a script on the host forward messages between them:
 
 ```
 Container                          Host
 Claude Code                        Chrome
     |                                |
     v                                ^
-socat (entrypoint)   --TCP:9229-->  bridge-host.js
-(Unix socket)                      (Unix socket)
+socat (entrypoint)   --TCP:9229-->  bridge-host.js / bridge-host.ps1
+(Unix socket)                      (Unix socket or Named Pipe)
 ```
 
 ## Prerequisites
 
 - Docker (Docker Desktop, OrbStack, or similar)
-- Node.js on the host (for bridge-host.js)
 - Chrome with the [Claude browser extension](https://claude.ai/chrome) installed
 - Claude account credentials
+- **Mac/Linux host:** Node.js (for `bridge-host.js`)
+- **Windows host:** PowerShell 7+ (for `bridge-host.ps1`) — no Node.js needed
 
-## Setup
+## Setup (Mac / Linux host)
 
 1. **Create `.env.local`** with your credentials:
 
@@ -56,6 +57,52 @@ socat (entrypoint)   --TCP:9229-->  bridge-host.js
 
 5. Ask Claude to do something in Chrome, e.g. `open google.com`.
 
+## Setup (Windows host — VS Code Dev Containers)
+
+On Windows, Claude Code uses a **Named Pipe** (`\\.\pipe\claude-mcp-browser-bridge-<user>`) instead of a Unix socket, so `bridge-host.js` won't work. Use `bridge-host.ps1` instead — no Node.js required.
+
+### Additional prerequisites
+
+- PowerShell 7+: `winget install Microsoft.PowerShell`
+- Claude Code installed on Windows (registers the Chrome Native Messaging Host):
+  ```powershell
+  npm install -g @anthropic-ai/claude-code
+  ```
+
+### Steps
+
+1. **Start Claude with Chrome on Windows** to activate the Named Pipe (keep this terminal open):
+
+   ```powershell
+   claude --chrome
+   ```
+
+2. **Start the PowerShell bridge** (separate terminal):
+
+   ```powershell
+   # -BridgeHost '::' is required on WSL2: Dev Containers resolve
+   # host.docker.internal as an IPv6 address
+   pwsh -ExecutionPolicy Bypass -File bridge-host.ps1 -BridgeHost '::'
+   ```
+
+3. **Inside the Dev Container**, run the helper script once:
+
+   ```bash
+   bash bridge-devcontainer.sh
+   ```
+
+   This installs socat, sets up the required `chrome-native-host` stub, and starts the socat bridge.
+
+4. **Inside the Dev Container**, start Claude:
+
+   ```bash
+   claude --chrome
+   ```
+
+> **Why two Claude instances?** The Windows instance keeps the Chrome Native Messaging Host
+> (and its Named Pipe) alive. The Dev Container instance is where you do your actual work —
+> it routes through the Named Pipe via the bridge to control Chrome.
+
 ## Commands
 
 | Command      | Description                              |
@@ -69,6 +116,7 @@ This project is a proof-of-concept solution for [anthropics/claude-code#15450](h
 
 ## Troubleshooting
 
-- **"Extension not detected"** — Make sure `bridge-host.js` is running on the host and Chrome has the Claude extension active.
-- **Bridge container can't connect** — Verify `bridge-host.js` is listening on port 9229.
+- **"Extension not detected"** — Make sure the bridge is running on the host and Chrome has the Claude extension active.
+- **Bridge container can't connect** — Verify the bridge is listening on port 9229. On Windows with WSL2, use `-BridgeHost '::'`.
 - **Username mismatch** — The `USER` env var in the container must match the socket directory name. It defaults to `claude`.
+- **"Pipe not found" (Windows)** — Make sure `claude --chrome` is running on Windows *before* starting `bridge-host.ps1`.
